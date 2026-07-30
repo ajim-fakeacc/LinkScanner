@@ -1,0 +1,111 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import pickle
+import numpy as np
+import random
+
+app = Flask(__name__)
+CORS(app)
+
+# --- 1. LOAD THE AI BRAIN (Model & Scaler) ---
+model = None
+scaler = None
+
+try:
+    with open('final_rf_model.pkl', 'rb') as f:
+        model = pickle.load(f)
+    print("✅ AI Model loaded successfully!")
+    
+    with open('feature_scaler.pkl', 'rb') as f:
+        scaler = pickle.load(f)
+    print("✅ Feature Scaler loaded successfully!")
+
+except Exception as e:
+    print(f"⚠️ WARNING: Could not load AI files. Error: {e}")
+    print("⚠️ System running in 'Rules-Only' mode.")
+
+# --- 2. TIPS DATABASE ---
+SAFE_TIPS = [
+    "✅ This link appears safe, but never share your password.",
+    "✅ Always verify the URL spelling (e.g., 'g0ogle.com' is fake).",
+    "✅ Green lock icons do not guarantee a site is official."
+]
+
+DANGER_TIPS = [
+    "⛔ WARNING: This site shows signs of phishing.",
+    "⛔ Do not login or download anything here.",
+    "⛔ Delete the message that sent you this link."
+]
+
+# --- 3. FEATURE EXTRACTION (The "Translator") ---
+# ⚠️ IMPORTANT: This must match the features your model was trained on.
+# Currently, it extracts 4 common features.
+def extract_features(url):
+    features = [
+        len(url),                       # 1. Length
+        url.count('.'),                 # 2. Dot count
+        url.count('/'),                 # 3. Slash count
+        1 if 'https' in url else 0,     # 4. Is HTTPS?
+    ]
+    return features
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    try:
+        data = request.get_json()
+        if not data or 'url' not in data:
+            return jsonify({'error': 'No URL provided'}), 400
+        
+        url = data['url']
+        print(f"🔎 Analyzing: {url}")
+
+        # Default to Safe unless proven dangerous
+        is_safe = True 
+        
+        # A. Basic Keyword Check (Fast Filter)
+        bad_keywords = ['login', 'verify', 'update', 'bank', 'free-gift', 'ngrok']
+        if any(key in url.lower() for key in bad_keywords):
+            is_safe = False
+
+        # B. AI Advanced Check
+        if model and scaler:
+            try:
+                # 1. Extract info from URL
+                features = extract_features(url)
+                
+                # 2. Prepare data (Reshape & Scale)
+                features_array = np.array([features])
+                scaled_features = scaler.transform(features_array)
+                
+                # 3. Ask the AI
+                prediction = model.predict(scaled_features)
+                
+                # 4. Result (Assuming 1 = Phishing)
+                if prediction[0] == 1:
+                    is_safe = False
+                    print("🤖 AI says: DANGEROUS")
+                else:
+                    print("🤖 AI says: SAFE")
+
+            except ValueError as ve:
+                print(f"❌ FEATURE MISMATCH: {ve}")
+                print("Your model expects different features than the 4 we extracted.")
+                # We don't crash; we just rely on the keyword check instead.
+            except Exception as e:
+                print(f"❌ AI Error: {e}")
+
+        # C. Select a helpful tip
+        tip = random.choice(SAFE_TIPS) if is_safe else random.choice(DANGER_TIPS)
+
+        return jsonify({
+            'url': url,
+            'is_safe': is_safe,
+            'tips': tip
+        })
+
+    except Exception as e:
+        print(f"🔥 Server Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
