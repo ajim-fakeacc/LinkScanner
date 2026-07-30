@@ -1,0 +1,73 @@
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+
+class DatabaseHelper {
+  static final DatabaseHelper instance = DatabaseHelper._init();
+  static Database? _database;
+
+  DatabaseHelper._init();
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDB('link_history_v2.db'); 
+    return _database!;
+  }
+
+  Future<Database> _initDB(String filePath) async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, filePath);
+
+    return await openDatabase(path, version: 1, onCreate: _createDB);
+  }
+
+  Future _createDB(Database db, int version) async {
+    await db.execute('''
+    CREATE TABLE scans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      url TEXT NOT NULL,
+      isSafe INTEGER NOT NULL, 
+      source TEXT NOT NULL, 
+      timestamp TEXT NOT NULL
+    )
+    ''');
+  }
+
+  // Insert a new scan
+  Future<int> insertScan(String url, bool isSafe, String source) async {
+    final db = await instance.database;
+    return await db.insert('scans', {
+      'url': url,
+      'isSafe': isSafe ? 1 : 0,
+      'source': source,
+      'timestamp': DateTime.now().toIso8601String(),
+    });
+  }
+
+  // Get a specific scan
+  Future<Map<String, dynamic>?> getScanResult(String url) async {
+    final db = await instance.database;
+    final maps = await db.query(
+      'scans',
+      where: 'url = ?',
+      whereArgs: [url],
+    );
+
+    if (maps.isNotEmpty) {
+      return maps.first;
+    } else {
+      return null;
+    }
+  }
+
+  // Get all history
+  Future<List<Map<String, dynamic>>> getAllScans() async {
+    final db = await instance.database;
+    return await db.query('scans', orderBy: "timestamp DESC");
+  }
+
+  // 🗑️ NEW: Function to clear all history
+  Future<int> clearHistory() async {
+    final db = await instance.database;
+    return await db.delete('scans'); // This deletes every row in the table
+  }
+}
